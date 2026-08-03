@@ -314,6 +314,27 @@
       background: #ffe0e3;
       border-radius: 4px;
     }
+
+    .dropdown-lugares .btn-editar-lugar {
+      background: none;
+      border: none;
+      color: #0d6efd;
+      font-size: 15px;
+      line-height: 1;
+      cursor: pointer;
+      padding: 2px 6px;
+      flex-grow: 0;
+      min-width: auto;
+    }
+
+    .dropdown-lugares .btn-editar-lugar:hover {
+      background: #e3f0ff;
+      border-radius: 4px;
+    }
+
+    .btn-orden {
+      background: #495057;
+    }
   </style>
 </head>
 <body>
@@ -346,6 +367,7 @@
 
   <div class="controls">
     <button onclick="agregarDia()">Agregar Día</button>
+    <button id="botonOrden" class="btn-orden" onclick="alternarOrden()">↓ Más reciente primero</button>
     <button class="btn-informe" onclick="generarInformeImagen()">Descargar Informe</button>
     <button class="btn-informe" style="background-color:#1d6f42;" onclick="exportarLibroDiario()">Exportar Libro Diario (Excel)</button>
     <button class="btn-borrar" style="flex-grow:1;background:#ffc107;color:#000;" onclick="limpiarLugarActual()">Limpiar Todo</button>
@@ -508,10 +530,94 @@ function calcularTotal() {
   if (lugarActual) guardarDatosLugar(lugarActual);
 }
 
-// Envuelve evaluarSeparador para además persistir la fecha ingresada
+// Cuando se elige/cambia una fecha, la fila se reubica automáticamente
+// en el lugar cronológico que le corresponde (según el orden activo),
+// aunque sea una fecha "atrasada" que se cargó después de otras.
 function actualizarFecha(inputFecha) {
-  evaluarSeparador(inputFecha);
-  guardarDatosLugar(lugarActual);
+  const datos = extraerDatosDeTabla();
+  renderizarTabla(ordenarDatos(datos));
+}
+
+// true = más reciente primero (descendente) · false = más antiguo primero (ascendente)
+let ordenDescendente = localStorage.getItem('cdm_orden') !== 'asc';
+
+// Lee todas las filas de datos actualmente en la tabla (ignora separadores de mes)
+function extraerDatosDeTabla() {
+  const filas = document.querySelectorAll('#tablaDias tr:not(.separador-mes)');
+  const datos = [];
+
+  filas.forEach(fila => {
+    const inputFecha = fila.querySelector('input[type="date"]');
+    const inputLitros = fila.querySelector('.litros');
+    const inputDinero = fila.querySelector('.valor');
+
+    if (inputFecha && inputLitros && inputDinero) {
+      datos.push({
+        fecha: inputFecha.value,
+        litros: inputLitros.value,
+        dinero: inputDinero.value,
+        precio: inputDinero.getAttribute('data-precio') || '0.60'
+      });
+    }
+  });
+
+  return datos;
+}
+
+// Ordena un array de días según el orden activo. Las filas sin fecha todavía
+// (recién agregadas, en blanco) quedan siempre arriba de todo hasta que se
+// les ponga una fecha.
+function ordenarDatos(datos) {
+  const conFecha = datos.filter(d => d.fecha);
+  const sinFecha = datos.filter(d => !d.fecha);
+
+  conFecha.sort((a, b) => ordenDescendente
+    ? b.fecha.localeCompare(a.fecha)
+    : a.fecha.localeCompare(b.fecha));
+
+  return sinFecha.concat(conFecha);
+}
+
+// Reconstruye toda la tabla a partir de un array de datos ya ordenado.
+// Usada tanto al cargar un lugar como al reordenar/editar fechas.
+function renderizarTabla(datos) {
+  document.getElementById('tablaDias').innerHTML = '';
+  mesesConSeparador = [];
+
+  datos.forEach(d => {
+    agregarDia(false); // false: no autoguardar fila por fila mientras se reconstruye
+    const filas = document.querySelectorAll('#tablaDias tr:not(.separador-mes)');
+    const filaActual = filas[filas.length - 1];
+
+    const inputFecha = filaActual.querySelector('input[type="date"]');
+    const inputLitros = filaActual.querySelector('.litros');
+    const inputDinero = filaActual.querySelector('.valor');
+
+    inputFecha.value = d.fecha || '';
+    inputLitros.value = d.litros || '';
+    inputDinero.value = d.dinero || '0.00';
+    inputDinero.setAttribute('data-precio', d.precio || '0.60');
+
+    if (d.fecha) evaluarSeparador(inputFecha);
+  });
+
+  calcularTotal(); // recalcula el total y guarda el estado final
+}
+
+// Cambia entre "más reciente primero" y "más antiguo primero"
+function alternarOrden() {
+  ordenDescendente = !ordenDescendente;
+  guardarClave('cdm_orden', ordenDescendente ? 'desc' : 'asc');
+
+  const datos = extraerDatosDeTabla();
+  renderizarTabla(ordenarDatos(datos));
+  actualizarBotonOrden();
+}
+
+function actualizarBotonOrden() {
+  const boton = document.getElementById('botonOrden');
+  if (!boton) return;
+  boton.textContent = ordenDescendente ? '↓ Más reciente primero' : '↑ Más antiguo primero';
 }
 
 // Recalcula el dinero de todas las filas que ya tengan litros cargados,
@@ -1073,6 +1179,18 @@ function actualizarSelectorLugares(lugares) {
 
     item.appendChild(nombre);
 
+    // Lápiz para renombrar el lugar
+    const btnEditar = document.createElement('button');
+    btnEditar.type = 'button';
+    btnEditar.className = 'btn-editar-lugar';
+    btnEditar.textContent = '✎';
+    btnEditar.title = 'Renombrar "' + l + '"';
+    btnEditar.onclick = (e) => {
+      e.stopPropagation();
+      editarLugar(l);
+    };
+    item.appendChild(btnEditar);
+
     // La X roja para borrar solo tiene sentido si queda al menos otro lugar
     if (lugares.length > 1) {
       const btnX = document.createElement('button');
@@ -1130,7 +1248,7 @@ function guardarDatosLugar(lugar) {
   const filas = document.querySelectorAll('#tablaDias tr');
   const datos = [];
 
-  filas.forEach(fila => {
+  filas.forEach(fila =>
     if (fila.classList.contains('separador-mes')) return;
 
     const inputFecha = fila.querySelector('input[type="date"]');
@@ -1165,25 +1283,7 @@ function cargarDatosLugar(lugar) {
   }
 
   const datos = JSON.parse(localStorage.getItem('cdm_datos_' + lugar)) || [];
-
-  datos.forEach(d => {
-    agregarDia(false); // false: no autoguardar mientras se está cargando
-    const filas = document.querySelectorAll('#tablaDias tr:not(.separador-mes)');
-    const filaActual = filas[filas.length - 1];
-
-    const inputFecha = filaActual.querySelector('input[type="date"]');
-    const inputLitros = filaActual.querySelector('.litros');
-    const inputDinero = filaActual.querySelector('.valor');
-
-    inputFecha.value = d.fecha || '';
-    inputLitros.value = d.litros || '';
-    inputDinero.value = d.dinero || '0.00';
-    inputDinero.setAttribute('data-precio', d.precio || '0.60');
-
-    if (d.fecha) evaluarSeparador(inputFecha);
-  });
-
-  calcularTotal();
+  renderizarTabla(ordenarDatos(datos));
 }
 
 function cambiarLugar(nombre) {
@@ -1210,6 +1310,58 @@ function crearLugar() {
   guardarListaLugares(lugares);
   cambiarLugar(nombreLimpio);
   actualizarSelectorLugares(lugares);
+}
+
+// Renombra un lugar existente (llamado desde el lápiz del desplegable),
+// migrando sus datos guardados, su color y su precio a la nueva clave.
+function editarLugar(nombreViejo) {
+  const nombreNuevo = prompt('Nuevo nombre para "' + nombreViejo + '":', nombreViejo);
+  if (nombreNuevo === null) return;
+
+  const limpio = nombreNuevo.trim();
+  if (!limpio || limpio === nombreViejo) return;
+
+  let lugares = obtenerLugares();
+  if (lugares.includes(limpio)) {
+    alert('Ya existe un lugar con ese nombre.');
+    return;
+  }
+
+  // Migra los registros guardados a la nueva clave
+  const datos = localStorage.getItem('cdm_datos_' + nombreViejo);
+  if (datos !== null) {
+    guardarClave('cdm_datos_' + limpio, datos);
+  }
+  borrarClave('cdm_datos_' + nombreViejo);
+
+  // Migra el color asignado
+  const colores = obtenerColores();
+  if (colores[nombreViejo]) {
+    colores[limpio] = colores[nombreViejo];
+    delete colores[nombreViejo];
+    guardarColores(colores);
+  }
+
+  // Migra el precio guardado
+  const precios = obtenerPrecios();
+  if (precios[nombreViejo] !== undefined) {
+    precios[limpio] = precios[nombreViejo];
+    delete precios[nombreViejo];
+    guardarPrecios(precios);
+  }
+
+  // Actualiza la lista de lugares manteniendo la posición
+  lugares = lugares.map(l => l === nombreViejo ? limpio : l);
+  guardarListaLugares(lugares);
+
+  const eraActual = (lugarActual === nombreViejo);
+  if (eraActual) {
+    lugarActual = limpio;
+    guardarClave('cdm_lugarActual', lugarActual);
+  }
+
+  actualizarSelectorLugares(lugares);
+  if (eraActual) actualizarTituloLugar();
 }
 
 // Elimina un lugar específico (llamado desde la X roja del desplegable).
@@ -1277,6 +1429,7 @@ function inicializarApp() {
 
   actualizarSelectorLugares(lugares);
   actualizarTituloLugar();
+  actualizarBotonOrden();
   cargarDatosLugar(lugarActual);
 }
 
@@ -1379,3 +1532,5 @@ if ('serviceWorker' in navigator) {
 
 </body>
 </html>
+      
+      
